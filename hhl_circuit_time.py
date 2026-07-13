@@ -22,7 +22,7 @@ import numpy as np
 from scipy.linalg import expm
 
 from qiskit import QuantumCircuit, QuantumRegister, transpile
-from qiskit.circuit.library import QFT, RYGate
+from qiskit.circuit.library import QFT, RYGate, UnitaryGate
 from qiskit.visualization.timeline import draw as timeline_draw
 from qiskit_ibm_runtime.fake_provider import FakeFez
 
@@ -32,15 +32,15 @@ from qiskit_ibm_runtime.fake_provider import FakeFez
 # ============================================================
 
 # Replace A and b here. A must be square and Hermitian for standard HHL.
-A_MATRIX = np.array(
-    [
-        [1.0, -0.25],
-        [-0.25, 1.0],
-    ],
-    dtype=complex,
-)
+MATRIX_DIMENSION = 16
+A_MATRIX = (
+    np.diag(np.ones(MATRIX_DIMENSION))
+    + np.diag(-0.25 * np.ones(MATRIX_DIMENSION - 1), k=1)
+    + np.diag(-0.25 * np.ones(MATRIX_DIMENSION - 1), k=-1)
+).astype(complex)
 
-B_VECTOR = np.array([1.0, 0.0], dtype=complex)
+B_VECTOR = np.zeros(MATRIX_DIMENSION, dtype=complex)
+B_VECTOR[0] = 1.0
 
 # These defaults can be replaced by values from your config.py.
 HHL_PHASE_QUBITS = 3
@@ -115,21 +115,24 @@ def controlled_unitary_power(
     power: int,
     control_qubit: int,
     target_qubits: list[int],
+    inverse: bool = False,
 ) -> None:
     """Append controlled-U**power exactly as in the supplied HHL solver."""
 
     unitary_power = np.linalg.matrix_power(unitary, power)
 
-    unitary_circuit = QuantumCircuit(
-        len(target_qubits),
-        name=f"U^{power}",
-    )
-    unitary_circuit.unitary(
+    controlled_gate = UnitaryGate(
         unitary_power,
-        list(range(len(target_qubits))),
-    )
+        label=f"U^{power}",
+    ).control(1)
 
-    controlled_gate = unitary_circuit.to_gate().control(1)
+    if inverse:
+        if controlled_gate.definition is None:
+            raise RuntimeError("Controlled unitary has no circuit definition.")
+        controlled_gate = controlled_gate.definition.inverse().to_gate(
+            label=f"U^-{power}"
+        )
+
     circuit.append(
         controlled_gate,
         [control_qubit] + list(target_qubits),
@@ -162,6 +165,36 @@ def append_qpe(
         do_swaps=False,
     )
     circuit.append(inverse_qft, phase_qubits)
+
+
+def append_inverse_qpe(
+    circuit: QuantumCircuit,
+    phase_qubits: list[int],
+    target_qubits: list[int],
+    unitary: np.ndarray,
+) -> None:
+    """Append QPE dagger without asking Qiskit to invert synthesized gates."""
+
+    qft = QFT(
+        num_qubits=len(phase_qubits),
+        inverse=False,
+        do_swaps=False,
+    )
+    circuit.append(qft, phase_qubits)
+
+    controlled_powers = list(enumerate(reversed(phase_qubits)))
+    for index, control in reversed(controlled_powers):
+        controlled_unitary_power(
+            circuit=circuit,
+            unitary=unitary,
+            power=2**index,
+            control_qubit=control,
+            target_qubits=target_qubits,
+            inverse=True,
+        )
+
+    for qubit in reversed(phase_qubits):
+        circuit.h(qubit)
 
 
 def append_control_rotation(
@@ -296,28 +329,13 @@ def build_hhl_circuit(
         C,
     )
 
-    # Step 4: inverse QPE, matching the original solver implementation.
-    qpe_only = QuantumCircuit(
-        phase_qubit_count + target_qubit_count,
-        name="QPE",
-    )
-    append_qpe(
-        qpe_only,
-        list(range(phase_qubit_count)),
-        list(
-            range(
-                phase_qubit_count,
-                phase_qubit_count + target_qubit_count,
-            )
-        ),
+    # Step 4: inverse QPE. Build it directly to avoid numerical failures in
+    # Qiskit's inversion of synthesized multi-qubit controlled unitaries.
+    append_inverse_qpe(
+        circuit,
+        phase_indices,
+        target_indices,
         unitary,
-    )
-
-    inverse_qpe = qpe_only.inverse()
-    inverse_qpe.name = "QPE_dagger"
-    circuit.append(
-        inverse_qpe,
-        phase_indices + target_indices,
     )
 
     if include_measurement:
@@ -505,11 +523,11 @@ def main() -> None:
     )
     print("====================================================\n")
 
-    save_figures(
-        original_circuit=hhl_circuit,
-        scheduled_circuit=scheduled_circuit,
-        backend=backend,
-    )
+    # save_figures(
+    #     original_circuit=hhl_circuit,
+    #     scheduled_circuit=scheduled_circuit,
+    #     backend=backend,
+    # )
 
 
 if __name__ == "__main__":

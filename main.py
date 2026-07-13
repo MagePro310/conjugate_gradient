@@ -1,7 +1,15 @@
 import numpy as np
+from time import perf_counter_ns
 
 
-def conjugate_gradient(A, b, x0=None, tol=1e-8, max_iter=None):
+def conjugate_gradient(
+    A,
+    b,
+    x0=None,
+    tol=1e-8,
+    max_iter=None,
+    verbose=False,
+):
     """
     Giải hệ Ax = b bằng phương pháp Conjugate Gradient.
 
@@ -49,10 +57,11 @@ def conjugate_gradient(A, b, x0=None, tol=1e-8, max_iter=None):
         rs_new = r @ r
         residual = np.sqrt(rs_new)
 
-        print(
-            f"Iteration {iteration}: "
-            f"x = {x}, residual = {residual:.6e}"
-        )
+        if verbose:
+            print(
+                f"Iteration {iteration}: "
+                f"x = {x}, residual = {residual:.6e}"
+            )
 
         if residual < tol:
             return x, iteration
@@ -68,20 +77,15 @@ def conjugate_gradient(A, b, x0=None, tol=1e-8, max_iter=None):
 # THAY MA TRẬN A VÀ VECTOR b TẠI ĐÂY
 # =========================================================
 
-A = [
-    [4, -1,  0,  0,  0,  0,  0,  0,  0,  0],
-    [-1, 4, -1,  0,  0,  0,  0,  0,  0,  0],
-    [0, -1,  4, -1,  0,  0,  0,  0,  0,  0],
-    [0,  0, -1,  4, -1,  0,  0,  0,  0,  0],
-    [0,  0,  0, -1,  4, -1,  0,  0,  0,  0],
-    [0,  0,  0,  0, -1,  4, -1,  0,  0,  0],
-    [0,  0,  0,  0,  0, -1,  4, -1,  0,  0],
-    [0,  0,  0,  0,  0,  0, -1,  4, -1,  0],
-    [0,  0,  0,  0,  0,  0,  0, -1,  4, -1],
-    [0,  0,  0,  0,  0,  0,  0,  0, -1,  4]
-]
+MATRIX_DIMENSION = 16
+A = (
+    np.diag(np.ones(MATRIX_DIMENSION))
+    + np.diag(-0.25 * np.ones(MATRIX_DIMENSION - 1), k=1)
+    + np.diag(-0.25 * np.ones(MATRIX_DIMENSION - 1), k=-1)
+)
 
-b = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+b = np.zeros(MATRIX_DIMENSION)
+b[0] = 1.0
 
 # Nghiệm ban đầu, có thể để None để tự động dùng vector 0
 x0 = None
@@ -97,17 +101,23 @@ max_iterations = 100
 # CHẠY THUẬT TOÁN
 # =========================================================
 
+start_time_ns = perf_counter_ns()
 x, iterations = conjugate_gradient(
     A=A,
     b=b,
     x0=x0,
     tol=tolerance,
-    max_iter=max_iterations
+    max_iter=max_iterations,
+    verbose=False,
 )
+elapsed_time_ns = perf_counter_ns() - start_time_ns
+elapsed_time_seconds = elapsed_time_ns / 1e9
 
 print("\nKết quả Conjugate Gradient")
 print("x =", x)
 print("Số vòng lặp =", iterations)
+print(f"Thời gian CG = {elapsed_time_seconds:.12e} giây")
+print(f"Thời gian CG = {elapsed_time_ns / 1e3:.3f} us")
 
 # So sánh với nghiệm trực tiếp của NumPy
 x_exact = np.linalg.solve(
